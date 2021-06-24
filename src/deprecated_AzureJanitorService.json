@@ -1,0 +1,1796 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "variables": {
+        "connections_arm_name": "arm",
+        "connections_teams_name": "teams",
+        "connections_office365_name": "office365",
+        "connections_sharepointonline_name": "sharepointonline",
+        "workflows_CoreApp_name": "CoreApp",
+        "workflows_TeamsBotApp_name": "TeamsBotApp",
+        "workflows_EmailAlertingApp_name": "EmailAlertingApp",
+        "workflows_InsightsTeamsBotApp_name": "InsightsTeamsBotApp",
+        "workflows_InsightsApp_name": "InsightsApp",
+        "workflows_CheckResourceGroupsApp_name": "CheckResourceGroupsApp",
+        "workflows_ResourceGroupOwnerApp_name": "ResourceGroupOwnerApp",
+        "workflows_DeleteResourceGroupApp_name": "DeleteResourceGroupApp"
+    },
+    "parameters": {
+        "TeamName": {
+          "type": "string"
+        },
+        "Subscription": {
+          "type": "string"
+        },
+        "Location": {
+          "type": "string"
+        },
+        "DaysUntilDeletion": {
+          "type": "string"
+        },
+        "AlertDaysBeforeDeletion": {
+          "type": "string"
+        },
+        "AdminEmail": {
+          "type": "string"
+        },
+        "ResourceGroupName": {
+          "type": "string"
+        },
+        "PolicyName": {
+          "type": "string"
+        },
+        "PolicyDisplayName": {
+          "type": "string"
+        },
+        "UserManagedIdentity": {
+          "type": "string"
+        },
+        "PrincipalId": {
+            "type": "string"
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('connections_arm_name')]",
+            "location": "[parameters('Location')]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[parameters('AdminEmail')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_arm_name'))]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('connections_office365_name')]",
+            "location": "[parameters('Location')]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[parameters('AdminEmail')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_office365_name'))]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('connections_sharepointonline_name')]",
+            "location": "[parameters('Location')]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[parameters('AdminEmail')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_sharepointonline_name'))]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('connections_teams_name')]",
+            "location": "[parameters('Location')]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[parameters('AdminEmail')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_teams_name'))]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[variables('workflows_CheckResourceGroupsApp_name')]",
+            "location": "[parameters('Location')]",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('UserManagedIdentity'))]": {}
+                    }
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {},
+                    "triggers": {
+                        "manual": {
+                            "type": "Request",
+                            "kind": "Http",
+                            "inputs": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "actions": {
+                        "Compose_Resource_Graph_query": {
+                            "runAfter": {
+                                "Select_subscription_IDs": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Compose",
+                            "inputs": "ResourceContainers\n| where type =~ 'microsoft.resources/subscriptions/resourcegroups'\n| extend CreationDate = todatetime(tags['CreationDate'])\n| extend DaysUntilDeletion = toint(tags['DaysUntilDeletion'])\n| extend DoNotRunAzureJanitor= (tags['DoNotRunAzureJanitor'])\n| where isnotempty(CreationDate) and isnotempty(DaysUntilDeletion)\n| where isempty(DoNotRunAzureJanitor)\n| extend DeletionDate = datetime_add('day', DaysUntilDeletion, CreationDate)\n| extend AlertDate = datetime_add('day', toint(tags['AlertDaysBeforeDeletion'])*-1, DeletionDate)\n| extend shouldDelete = DeletionDate <= now()\n| extend shouldAlert = datetime_diff('day', now(), startofday(AlertDate)) == 0\n| extend deletionDateStr = format_datetime(DeletionDate, 'yyyy-MM-dd')\n| project shouldAlert,shouldDelete,id,name,location,deletionDateStr"
+                        },
+                        "Compose_response_with_resource_groups": {
+                            "runAfter": {
+                                "Select_resource_groups_to_delete": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Compose",
+                            "inputs": {
+                                "ToBeAlerted": "@body('Select_resource_groups_to_alert')",
+                                "ToBeDeleted": "@body('Select_resource_groups_to_delete')"
+                            }
+                        },
+                        "Filter_results_for_resource_groups_to_alert": {
+                            "runAfter": {
+                                "Query_Resource_Graph_for_resources_to_alert_or_delete": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Query",
+                            "inputs": {
+                                "from": "@body('Query_Resource_Graph_for_resources_to_alert_or_delete')?['data']?['rows']",
+                                "where": "@equals(item()[0], 1)"
+                            }
+                        },
+                        "Filter_results_for_resource_groups_to_delete": {
+                            "runAfter": {
+                                "Select_resource_groups_to_alert": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Query",
+                            "inputs": {
+                                "from": "@body('Query_Resource_Graph_for_resources_to_alert_or_delete')?['data']?['rows']",
+                                "where": "@equals(item()[1], 1)"
+                            }
+                        },
+                        "Initialize_SubscriptionIds": {
+                            "runAfter": {},
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "SubscriptionIds",
+                                        "type": "array"
+                                    }
+                                ]
+                            }
+                        },
+                        "List_Subscriptions": {
+                            "runAfter": {
+                                "Initialize_SubscriptionIds": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http",
+                            "inputs": {
+                                "authentication": {
+                                    "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('UserManagedIdentity'))]",
+                                    "type": "ManagedServiceIdentity"
+                                },
+                                "method": "GET",
+                                "uri": "https://management.azure.com/subscriptions?api-version=2019-06-01"
+                            }
+                        },
+                        "Query_Resource_Graph_for_resources_to_alert_or_delete": {
+                            "runAfter": {
+                                "Compose_Resource_Graph_query": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http",
+                            "inputs": {
+                                "authentication": {
+                                    "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('UserManagedIdentity'))]",
+                                    "type": "ManagedServiceIdentity"
+                                },
+                                "body": {
+                                    "query": "@string(outputs('Compose_Resource_Graph_query'))",
+                                    "subscriptions": "@variables('SubscriptionIds')"
+                                },
+                                "method": "POST",
+                                "uri": "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2019-04-01"
+                            }
+                        },
+                        "Response": {
+                            "runAfter": {
+                                "Compose_response_with_resource_groups": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Response",
+                            "kind": "Http",
+                            "inputs": {
+                                "body": "@outputs('Compose_response_with_resource_groups')",
+                                "statusCode": 200
+                            }
+                        },
+                        "Select_resource_groups_to_alert": {
+                            "runAfter": {
+                                "Filter_results_for_resource_groups_to_alert": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Select",
+                            "inputs": {
+                                "from": "@body('Filter_results_for_resource_groups_to_alert')",
+                                "select": {
+                                    "DeletionDate": "@item()[5]",
+                                    "Location": "@item()[4]",
+                                    "Name": "@item()[3]",
+                                    "ResourceId": "@item()[2]"
+                                }
+                            }
+                        },
+                        "Select_resource_groups_to_delete": {
+                            "runAfter": {
+                                "Filter_results_for_resource_groups_to_delete": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Select",
+                            "inputs": {
+                                "from": "@body('Filter_results_for_resource_groups_to_delete')",
+                                "select": {
+                                    "DeletionDate": "@item()[5]",
+                                    "Location": "@item()[4]",
+                                    "Name": "@item()[3]",
+                                    "ResourceId": "@item()[2]"
+                                }
+                            }
+                        },
+                        "Select_subscription_IDs": {
+                            "foreach": "@body('List_Subscriptions')['value']",
+                            "actions": {
+                                "Append_to_SubscriptionIds": {
+                                    "runAfter": {},
+                                    "type": "AppendToArrayVariable",
+                                    "inputs": {
+                                        "name": "SubscriptionIds",
+                                        "value": "@items('Select_subscription_IDs')['subscriptionId']"
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "List_Subscriptions": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {}
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[variables('workflows_EmailAlertingApp_name')]",
+            "location": "[parameters('Location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', variables('connections_office365_name'))]"
+            ],
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('UserManagedIdentity'))]": {}
+                    }
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "manual": {
+                            "type": "Request",
+                            "kind": "Http",
+                            "inputs": {
+                                "method": "POST",
+                                "schema": {
+                                    "properties": {
+                                        "Owners": {
+                                            "items": {
+                                                "type": "string"
+                                            },
+                                            "type": "array"
+                                        },
+                                        "ResourceId": {
+                                            "type": "string"
+                                        },
+                                        "deletionDate": {
+                                            "type": "string"
+                                        },
+                                        "name": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "actions": {
+                        "Response": {
+                            "runAfter": {
+                                "Send_an_email_(V2)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Response",
+                            "kind": "Http",
+                            "inputs": {
+                                "statusCode": 200
+                            }
+                        },
+                        "Send_an_email_(V2)": {
+                            "runAfter": {},
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": {
+                                    "Body": "<p>Hi,<br>\n<br>\nThis is an automated message informing you that Azure Janitor will be cleaning up the resource group:  @{triggerBody()?['name']} on @{triggerBody()?['deletionDate']}. If you do NOT want this to be done, please remove/renew the delete flag from the link: &nbsp;@{concat('https://ms.portal.azure.com/#@microsoft.onmicrosoft.com/resource',triggerBody()?['ResourceId'],'/tags')}. Otherwise please take no action as Azure Janitor helps you save :)</p>",
+                                    "Cc": "@{join(triggerBody()?['Owners'],',')}",
+                                    "Subject": "[[[AzureJanitor] Your resource group: @{triggerBody()?['name']} will be deleted soon",
+                                    "To": "@{triggerBody()['Owners'][0]}"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['office365']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/v2/Mail"
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "office365": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('connections_office365_name'))]",
+                                "connectionName": "variables('connections_office365_name')",
+                                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_office365_name'))]"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[variables('workflows_InsightsTeamsBotApp_name')]",
+            "location": "[parameters('Location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', variables('connections_teams_name'))]"
+            ],
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "manual": {
+                            "type": "Request",
+                            "kind": "Http",
+                            "inputs": {
+                                "schema": {
+                                    "properties": {
+                                        "Owners": {
+                                            "items": {
+                                                "type": "string"
+                                            },
+                                            "type": "array"
+                                        },
+                                        "ResourceId": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "actions": {
+                        "For_each": {
+                            "foreach": "@triggerBody()?['Owners']",
+                            "actions": {
+                                "Post_a_message_as_the_Flow_bot_to_a_user": {
+                                    "runAfter": {},
+                                    "type": "ApiConnection",
+                                    "inputs": {
+                                        "body": {
+                                            "messageBody": "Hi @{items('For_each')},\nThis is an automated message from AzureJanitor, our insights have seen that [@{triggerBody()?['ResourceId']}](@{concat('https://ms.portal.azure.com/#@microsoft.onmicrosoft.com/resource',triggerBody()?['ResourceId'])}) has been inactive for a month, you may want to delete it! ",
+                                            "messageTitle": "AzureJanitor has found an unused resource!",
+                                            "recipient": {
+                                                "to": "@{items('For_each')}"
+                                            }
+                                        },
+                                        "host": {
+                                            "connection": {
+                                                "name": "@parameters('$connections')['teams']['connectionId']"
+                                            }
+                                        },
+                                        "method": "post",
+                                        "path": "/flowbot/actions/notification/recipienttypes/user"
+                                    }
+                                }
+                            },
+                            "runAfter": {},
+                            "type": "Foreach"
+                        },
+                        "Response": {
+                            "runAfter": {
+                                "For_each": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Response",
+                            "kind": "Http",
+                            "inputs": {
+                                "statusCode": 200
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "teams": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('connections_teams_name'))]",
+                                "connectionName": "variables('connections_teams_name')",
+                                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_teams_name'))]"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[variables('workflows_ResourceGroupOwnerApp_name')]",
+            "location": "[parameters('Location')]",
+           "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('UserManagedIdentity'))]": {}
+                    }
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {},
+                    "triggers": {
+                        "manual": {
+                            "type": "Request",
+                            "kind": "Http",
+                            "inputs": {
+                                "schema": {
+                                    "properties": {
+                                        "ToBeAlerted": {
+                                            "items": {
+                                                "properties": {
+                                                    "ResourceId": {
+                                                        "type": "string"
+                                                    }
+                                                },
+                                                "required": [
+                                                    "ResourceId"
+                                                ],
+                                                "type": "object"
+                                            },
+                                            "type": "array"
+                                        },
+                                        "ToBeAlertedInsights": {
+                                            "items": {
+                                                "properties": {
+                                                    "ResourceId": {
+                                                        "type": "string"
+                                                    }
+                                                },
+                                                "required": [
+                                                    "ResourceId"
+                                                ],
+                                                "type": "object"
+                                            },
+                                            "type": "array"
+                                        },
+                                        "ToBeDeleted": {
+                                            "items": {
+                                                "properties": {
+                                                    "ResourceId": {
+                                                        "type": "string"
+                                                    }
+                                                },
+                                                "required": [
+                                                    "ResourceId"
+                                                ],
+                                                "type": "object"
+                                            },
+                                            "type": "array"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "actions": {
+                        "Compose_4": {
+                            "runAfter": {
+                                "Condition_2": [
+                                    "Succeeded"
+                                ],
+                                "Condition_3": [
+                                    "Succeeded"
+                                ],
+                                "Condition_4": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Compose",
+                            "inputs": {
+                                "ToBeAlerted": "@union(variables('ToBeAlerted'),variables('ToBeAlerted'))",
+                                "ToBeAlertedInsights": "@union(variables('ToBeAlertedInsights'),variables('ToBeAlertedInsights'))",
+                                "ToBeDeleted": "@union(variables('ToBeDeleted'),variables('ToBeDeleted'))"
+                            }
+                        },
+                        "Condition_2": {
+                            "actions": {
+                                "For_each_resource": {
+                                    "foreach": "@triggerBody()?['ToBeAlertedInsights']",
+                                    "actions": {
+                                        "For_each_activity": {
+                                            "foreach": "@body('activity_body')['value']",
+                                            "actions": {
+                                                "Append_to_array_variable": {
+                                                    "runAfter": {
+                                                        "Compose": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "AppendToArrayVariable",
+                                                    "inputs": {
+                                                        "name": "ToBeAlertedInsights",
+                                                        "value": "@outputs('Compose')"
+                                                    }
+                                                },
+                                                "Compose": {
+                                                    "runAfter": {},
+                                                    "type": "Compose",
+                                                    "inputs": {
+                                                        "Owners": [
+                                                            "@items('For_each_activity')['caller']"
+                                                        ],
+                                                        "ResourceId": "@items('For_each_activity')['id']"
+                                                    }
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "activity_body": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Foreach"
+                                        },
+                                        "activity_body": {
+                                            "runAfter": {},
+                                            "type": "Http",
+                                            "inputs": {
+                                                "authentication": {
+                                                    "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('UserManagedIdentity'))]",
+                                                    "type": "ManagedServiceIdentity"
+                                                },
+                                                "method": "GET",
+                                                "uri": "https://management.azure.com/subscriptions/@{split(items('For_each_resource')['ResourceId'],'/')[2]}/providers/microsoft.insights/eventtypes/management/values?api-version=2015-04-01&$filter=eventTimestamp ge '2020-05-28' and resourceUri eq '@{items('For_each_resource')['ResourceId']}'&$select=caller"
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {},
+                                    "type": "Foreach"
+                                }
+                            },
+                            "runAfter": {
+                                "Initialize_variable_4": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "expression": {
+                                "and": [
+                                    {
+                                        "not": {
+                                            "equals": [
+                                                "@triggerBody()?['ToBeAlertedInsights']",
+                                                "@null"
+                                            ]
+                                        }
+                                    }
+                                ]
+                            },
+                            "type": "If"
+                        },
+                        "Condition_3": {
+                            "actions": {
+                                "For_each_delresource": {
+                                    "foreach": "@triggerBody()?['ToBeDeleted']",
+                                    "actions": {
+                                        "Append_to_array_variable_2": {
+                                            "runAfter": {
+                                                "For_each_rgactivity": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "AppendToArrayVariable",
+                                            "inputs": {
+                                                "name": "ToBeDeleted",
+                                                "value": {
+                                                    "DeletionDate": "@items('For_each_delresource')['DeletionDate']",
+                                                    "Name": "@items('For_each_delresource')['Name']",
+                                                    "Owners": "@variables('deleteOwners')",
+                                                    "ResourceId": "@items('For_each_delresource')['ResourceId']"
+                                                }
+                                            }
+                                        },
+                                        "For_each_rgactivity": {
+                                            "foreach": "@body('rgactivity_body')['value']",
+                                            "actions": {
+                                                "Compose_3": {
+                                                    "runAfter": {},
+                                                    "type": "Compose",
+                                                    "inputs": {
+                                                        "email": "@items('For_each_rgactivity')?['caller']",
+                                                        "resourceId": "@items('For_each_rgactivity')['id']"
+                                                    }
+                                                },
+                                                "Condition": {
+                                                    "actions": {
+                                                        "Append_to_array_variable_3": {
+                                                            "runAfter": {},
+                                                            "type": "AppendToArrayVariable",
+                                                            "inputs": {
+                                                                "name": "deleteOwners",
+                                                                "value": "@outputs('compose_3')?['email']"
+                                                            }
+                                                        }
+                                                    },
+                                                    "runAfter": {
+                                                        "Compose_3": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "expression": {
+                                                        "and": [
+                                                            {
+                                                                "not": {
+                                                                    "equals": [
+                                                                        "@outputs('compose_3')?['email']",
+                                                                        "@null"
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "contains": [
+                                                                    "@outputs('compose_3')?['email']",
+                                                                    "@"
+                                                                ]
+                                                            },
+                                                            {
+                                                                "not": {
+                                                                    "contains": [
+                                                                        "@variables('deleteOwners')",
+                                                                        "@outputs('compose_3')?['email']"
+                                                                    ]
+                                                                }
+                                                            }
+                                                        ]
+                                                    },
+                                                    "type": "If"
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "rgactivity_body": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Foreach"
+                                        },
+                                        "rgactivity_body": {
+                                            "runAfter": {},
+                                            "type": "Http",
+                                            "inputs": {
+                                                "authentication": {
+                                                    "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('UserManagedIdentity'))]",
+                                                    "type": "ManagedServiceIdentity"
+                                                },
+                                                "method": "GET",
+                                                "uri": "https://management.azure.com/subscriptions/@{split(items('For_each_delresource')['ResourceId'],'/')[2]}/providers/microsoft.insights/eventtypes/management/values?api-version=2015-04-01&$filter=eventTimestamp ge '2020-07-28' and resourceUri eq '@{items('For_each_delresource')['ResourceId']}'&$select=caller"
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {},
+                                    "type": "Foreach"
+                                }
+                            },
+                            "runAfter": {
+                                "Initialize_variable_4": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "expression": {
+                                "and": [
+                                    {
+                                        "not": {
+                                            "equals": [
+                                                "@triggerBody()?['ToBeDeleted']",
+                                                "@null"
+                                            ]
+                                        }
+                                    }
+                                ]
+                            },
+                            "type": "If"
+                        },
+                        "Condition_4": {
+                            "actions": {
+                                "For_each_alertrg": {
+                                    "foreach": "@triggerBody()?['ToBeAlerted']",
+                                    "actions": {
+                                        "Append_to_array_variable_5": {
+                                            "runAfter": {
+                                                "For_each_rgactivityrg": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "AppendToArrayVariable",
+                                            "inputs": {
+                                                "name": "ToBeAlerted",
+                                                "value": {
+                                                    "DeletionDate": "@items('For_each_alertrg')['DeletionDate']",
+                                                    "Name": "@items('For_each_alertrg')['Name']",
+                                                    "Owners": "@variables('alertOwners')",
+                                                    "ResourceId": "@items('For_each_alertrg')['ResourceId']"
+                                                }
+                                            }
+                                        },
+                                        "For_each_rgactivityrg": {
+                                            "foreach": "@body('rgactivity_rgbody')['value']",
+                                            "actions": {
+                                                "Compose_2": {
+                                                    "runAfter": {},
+                                                    "type": "Compose",
+                                                    "inputs": {
+                                                        "email": "@items('For_each_rgactivityrg')?['caller']",
+                                                        "resourceId": "@items('For_each_rgactivityrg')?['id']"
+                                                    }
+                                                },
+                                                "Condition_5": {
+                                                    "actions": {
+                                                        "Append_to_array_variable_4": {
+                                                            "runAfter": {},
+                                                            "type": "AppendToArrayVariable",
+                                                            "inputs": {
+                                                                "name": "alertOwners",
+                                                                "value": "@outputs('compose_2')?['email']"
+                                                            }
+                                                        }
+                                                    },
+                                                    "runAfter": {
+                                                        "Compose_2": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "expression": {
+                                                        "and": [
+                                                            {
+                                                                "not": {
+                                                                    "equals": [
+                                                                        "@outputs('compose_2')?['email']",
+                                                                        "@null"
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "contains": [
+                                                                    "@outputs('compose_2')?['email']",
+                                                                    "@"
+                                                                ]
+                                                            },
+                                                            {
+                                                                "not": {
+                                                                    "contains": [
+                                                                        "@variables('alertOwners')",
+                                                                        "@outputs('compose_2')?['email']"
+                                                                    ]
+                                                                }
+                                                            }
+                                                        ]
+                                                    },
+                                                    "type": "If"
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "rgactivity_rgbody": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Foreach"
+                                        },
+                                        "rgactivity_rgbody": {
+                                            "runAfter": {},
+                                            "type": "Http",
+                                            "inputs": {
+                                                "authentication": {
+                                                    "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('UserManagedIdentity'))]",
+                                                    "type": "ManagedServiceIdentity"
+                                                },
+                                                "method": "GET",
+                                                "uri": "https://management.azure.com/subscriptions/@{split(items('For_each_alertrg')['ResourceId'],'/')[2]}/providers/microsoft.insights/eventtypes/management/values?api-version=2015-04-01&$filter=eventTimestamp ge '2020-07-28' and resourceUri eq '@{items('For_each_alertrg')['ResourceId']}'&$select=caller"
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {},
+                                    "type": "Foreach"
+                                }
+                            },
+                            "runAfter": {
+                                "Initialize_variable_4": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "expression": {
+                                "and": [
+                                    {
+                                        "not": {
+                                            "equals": [
+                                                "@triggerBody()?['ToBeAlerted']",
+                                                "@null"
+                                            ]
+                                        }
+                                    }
+                                ]
+                            },
+                            "type": "If"
+                        },
+                        "Initialize_variable": {
+                            "runAfter": {},
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "ToBeAlerted",
+                                        "type": "array"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_2": {
+                            "runAfter": {
+                                "Initialize_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "ToBeDeleted",
+                                        "type": "array"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_3": {
+                            "runAfter": {
+                                "Initialize_variable_5": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "deleteOwners",
+                                        "type": "array"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_4": {
+                            "runAfter": {
+                                "Initialize_variable_3": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "alertOwners",
+                                        "type": "array"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_5": {
+                            "runAfter": {
+                                "Initialize_variable_2": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "ToBeAlertedInsights",
+                                        "type": "array"
+                                    }
+                                ]
+                            }
+                        },
+                        "Response": {
+                            "runAfter": {
+                                "Compose_4": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Response",
+                            "kind": "Http",
+                            "inputs": {
+                                "body": {
+                                    "ToBeAlerted": "@union(variables('ToBeAlerted'),variables('ToBeAlerted'))",
+                                    "ToBeAlertedInsights": "@union(variables('ToBeAlertedInsights'),variables('ToBeAlertedInsights'))",
+                                    "ToBeDeleted": "@union(variables('ToBeDeleted'),variables('ToBeDeleted'))"
+                                },
+                                "statusCode": 200
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {}
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[variables('workflows_TeamsBotApp_name')]",
+            "location": "[parameters('Location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', variables('connections_teams_name'))]"
+            ],
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "manual": {
+                            "type": "Request",
+                            "kind": "Http",
+                            "inputs": {
+                                "method": "POST",
+                                "schema": {
+                                    "properties": {
+                                        "Owners": {
+                                            "items": {
+                                                "type": "string"
+                                            },
+                                            "type": "array"
+                                        },
+                                        "ResourceId": {
+                                            "type": "string"
+                                        },
+                                        "deletionDate": {
+                                            "type": "string"
+                                        },
+                                        "name": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "actions": {
+                        "For_each": {
+                            "foreach": "@triggerBody()?['Owners']",
+                            "actions": {
+                                "Post_a_message_as_the_Flow_bot_to_a_user_2": {
+                                    "runAfter": {},
+                                    "type": "ApiConnection",
+                                    "inputs": {
+                                        "body": {
+                                            "messageBody": "Hi  @{items('For_each')},\nThis is an automated message informing you that Azure Janitor will be cleaning up the resource group: @{triggerBody()?['name']} on @{triggerBody()?['deletionDate']}. If you do NOT want this to be done, please remove/renew the delete flag from the link: [resourceGroupTags]( @{concat('https://ms.portal.azure.com/#@microsoft.onmicrosoft.com/resource',triggerBody()?['ResourceId'],'/tags')}) Otherwise please take no action as Azure Janitor helps you save :)",
+                                            "messageTitle": " @{triggerBody()?['name']} deletion scheduled for @{triggerBody()?['deletionDate']}",
+                                            "recipient": {
+                                                "to": "@{items('For_each')}"
+                                            }
+                                        },
+                                        "host": {
+                                            "connection": {
+                                                "name": "@parameters('$connections')['teams']['connectionId']"
+                                            }
+                                        },
+                                        "method": "post",
+                                        "path": "/flowbot/actions/notification/recipienttypes/user"
+                                    }
+                                }
+                            },
+                            "runAfter": {},
+                            "type": "Foreach"
+                        },
+                        "Response": {
+                            "runAfter": {
+                                "For_each": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Response",
+                            "kind": "Http",
+                            "inputs": {
+                                "statusCode": 200
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "teams": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('connections_teams_name'))]",
+                                "connectionName": "variables('connections_teams_name')",
+                                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_teams_name'))]"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[variables('workflows_DeleteResourceGroupApp_name')]",
+           "location": "[parameters('Location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', variables('connections_office365_name'))]"
+            ],
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('UserManagedIdentity'))]": {}
+                    }
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "manual": {
+                            "type": "Request",
+                            "kind": "Http",
+                            "inputs": {
+                                "schema": {
+                                    "properties": {
+                                        "Name": {
+                                            "type": "string"
+                                        },
+                                        "Owners": {
+                                            "items": {
+                                                "type": "string"
+                                            },
+                                            "type": "array"
+                                        },
+                                        "ResourceId": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "actions": {
+                        "Condition": {
+                             "actions": {
+                                "Send_a_success_email": {
+                                    "runAfter": {},
+                                    "type": "ApiConnection",
+                                    "inputs": {
+                                        "body": {
+                                            "Attachments": [
+                                                {
+                                                    "ContentBytes": "@{base64(json(variables('resourceGroupTemplate')))}",
+                                                    "Name": "deploymentTemplate.json"
+                                                }
+                                            ],
+                                            "Body": "<p>Hi @{join(variables('recipients'), ', ')},<br>\n<br>\nThis is an automated message informing you that Azure Janitor has cleaned up the resource group: @{variables('resourceGroupId')}.<br>\nIf you wish to recover or redeploy the resource group with its deleted resources, please use the attached ARM template. Otherwise, please take no action as Azure Janitor helps you save :)</p>",
+                                            "Subject": "[[[[[AzureJanitor] Your resource group @{triggerBody()?['Name']} has been deleted",
+                                            "To": "@{join(variables('recipients'), ',')}"
+                                        },
+                                        "host": {
+                                            "connection": {
+                                                "name": "@parameters('$connections')['office365']['connectionId']"
+                                            }
+                                        },
+                                        "method": "post",
+                                        "path": "/v2/Mail"
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "Delete_the_resource_group": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "else": {
+                                "actions": {
+                                    "Send_a_failure_email": {
+                                        "runAfter": {},
+                                        "type": "ApiConnection",
+                                        "inputs": {
+                                            "body": {
+                                                "Attachments": [
+                                                    {
+                                                        "ContentBytes": "@{base64(join(variables('resourceGroupTemplate')))}",
+                                                        "Name": "deploymentTemplate.json"
+                                                    }
+                                                ],
+                                                "Body": "<p>Hi @{join(variables('recipients'), ', ')},<br>\n<br>\nThis is an automated message informing you that Azure Janitor tried to clean up the resource group: @{variables('resourceGroupId')} from the subscription, since you set a delete flag as today. But, the resource group was not able to be deleted, because of some resources. If the delete flag was a mistake, or you want to redeploy the resource group with deleted resources, please use an azure resource template below.<br>\n<br>\nThank you.</p>",
+                                                "Subject": "AzureJanitor resource deletion notification",
+                                                "To": "@{join(variables('recipients'), ',')}"
+                                            },
+                                            "host": {
+                                                "connection": {
+                                                    "name": "@parameters('$connections')['office365']['connectionId']"
+                                                }
+                                            },
+                                            "method": "post",
+                                            "path": "/v2/Mail"
+                                        }
+                                    }
+                                }
+                            },
+                            "expression": {
+                                "and": [
+                                    {
+                                        "equals": [
+                                            "@outputs('Delete_the_resource_group')['statusCode']",
+                                            200
+                                        ]
+                                    }
+                                ]
+                            },
+                            "type": "If"
+                        },
+                        "Delete_the_resource_group": {
+                            "runAfter": {
+                                "Set_resourceGroupTemplate_variable_to_be_included_in_email": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http",
+                            "inputs": {
+                                "authentication": {
+                                    "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('UserManagedIdentity'))]",
+                                    "type": "ManagedServiceIdentity"
+                                },
+                                "method": "DELETE",
+                                "uri": "https://management.azure.com@{variables('resourceGroupId')}?api-version=2019-05-10"
+                            }
+                        },
+                        "Export_ARM_template_to_email_owners_before_deletion": {
+                            "runAfter": {
+                                "recipients_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http",
+                            "inputs": {
+                                "authentication": {
+                                    "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('UserManagedIdentity'))]",
+                                    "type": "ManagedServiceIdentity"
+                                },
+                                "body": {
+                                    "options": "IncludeParameterDefaultValue",
+                                    "resources": [
+                                        "*"
+                                    ]
+                                },
+                                "headers": {
+                                    "commandName": "HubsExtension.TemplateViewer.generateTemplate"
+                                },
+                                "method": "POST",
+                                "uri": "https://management.azure.com@{variables('resourceGroupId')}/exportTemplate?api-version=2019-08-01"
+                            }
+                        },
+                        "Response": {
+                            "runAfter": {
+                                "Condition": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Response",
+                            "kind": "Http",
+                            "inputs": {
+                                "statusCode": 200
+                            }
+                        },
+                        "Set_resourceGroupTemplate_variable_to_be_included_in_email": {
+                            "runAfter": {
+                                "Export_ARM_template_to_email_owners_before_deletion": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "SetVariable",
+                            "inputs": {
+                                "name": "resourceGroupTemplate",
+                                "value": "@{body('Export_ARM_template_to_email_owners_before_deletion')}"
+                            }
+                        },
+                        "recipients_variable": {
+                            "runAfter": {
+                                "resourceGroupId_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "recipients",
+                                        "type": "array",
+                                        "value": "@triggerBody()['Owners']"
+                                    }
+                                ]
+                            }
+                        },
+                        "resourceGroupId_variable": {
+                            "runAfter": {
+                                "resourceGroupTemplate_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "resourceGroupId",
+                                        "type": "string",
+                                        "value": "@{triggerBody()['ResourceId']}"
+                                    }
+                                ]
+                            }
+                        },
+                        "resourceGroupTemplate_variable": {
+                            "runAfter": {},
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "resourceGroupTemplate",
+                                        "type": "string"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "office365": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('connections_office365_name'))]",
+                                "connectionName": "variables('connections_office365_name')",
+                                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_office365_name'))]"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[variables('workflows_InsightsApp_name')]",
+            "location": "[parameters('Location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Logic/workflows', variables('workflows_ResourceGroupOwnerApp_name'))]",
+                "[resourceId('Microsoft.Logic/workflows', variables('workflows_InsightsTeamsBotApp_name'))]"
+            ],
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('UserManagedIdentity'))]": {}
+                    }
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {},
+                    "triggers": {
+                        "Recurrence": {
+                            "recurrence": {
+                                "frequency": "Week",
+                                "interval": 1,
+                                "schedule": {
+                                    "hours": [
+                                        "9"
+                                    ],
+                                    "minutes": [
+                                        0
+                                    ],
+                                    "weekDays": [
+                                        "Monday"
+                                    ]
+                                }
+                            },
+                            "type": "Recurrence"
+                        }
+                    },
+                    "actions": {
+                        "Compose": {
+                            "runAfter": {
+                                "Select_resource_IDs_to_be_alerted": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Compose",
+                            "inputs": {
+                                "ToBeAlertedInsights": "@body('Select_resource_IDs_to_be_alerted')"
+                            }
+                        },
+                        "For_each_subscription": {
+                            "foreach": "@body('List_Subscriptions')?['value']",
+                            "actions": {
+                                "For_each_resource": {
+                                    "foreach": "@body('Get_Resources')?['value']",
+                                    "actions": {
+                                        "Check_insights": {
+                                            "actions": {
+                                                "Check_if_there_has_been_any_activity_in_the_past_month": {
+                                                    "actions": {
+                                                        "Append_to_array_variable": {
+                                                            "runAfter": {},
+                                                            "type": "AppendToArrayVariable",
+                                                            "inputs": {
+                                                                "name": "ResourcesNotRecentlyUpdated",
+                                                                "value": "@items('For_each_resource')?['id']"
+                                                            }
+                                                        }
+                                                    },
+                                                    "runAfter": {
+                                                        "Get_Activity_Logs": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "expression": {
+                                                        "and": [
+                                                            {
+                                                                "equals": [
+                                                                    "@length(body('Get_Activity_Logs')?['value'])",
+                                                                    0
+                                                                ]
+                                                            },
+                                                            {
+                                                                "or": [
+                                                                    {
+                                                                        "contains": [
+                                                                            "@items('For_each_resource')?['id']",
+                                                                            "virtualMachine"
+                                                                        ]
+                                                                    },
+                                                                    {
+                                                                        "contains": [
+                                                                            "@items('For_each_resource')?['id']",
+                                                                            "azureFirewalls"
+                                                                        ]
+                                                                    },
+                                                                    {
+                                                                        "contains": [
+                                                                            "@items('For_each_resource')?['id']",
+                                                                            "virtualHubs"
+                                                                        ]
+                                                                    },
+                                                                    {
+                                                                        "contains": [
+                                                                            "@items('For_each_resource')?['id']",
+                                                                            "storage"
+                                                                        ]
+                                                                    },
+                                                                    {
+                                                                        "contains": [
+                                                                            "@items('For_each_resource')?['id']",
+                                                                            "virtualNetworks"
+                                                                        ]
+                                                                    },
+                                                                    {
+                                                                        "contains": [
+                                                                            "@items('For_each_resource')?['id']",
+                                                                            "virtualWans"
+                                                                        ]
+                                                                    }
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    "type": "If"
+                                                },
+                                                "Get_Activity_Logs": {
+                                                    "runAfter": {},
+                                                    "type": "Http",
+                                                    "inputs": {
+                                                        "authentication": {
+                                                            "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('UserManagedIdentity'))]",
+                                                            "type": "ManagedServiceIdentity"
+                                                        },
+                                                        "method": "GET",
+                                                        "uri": "https://management.azure.com/subscriptions/@{items('For_each_subscription')?['subscriptionId']}/providers/microsoft.insights/eventtypes/management/values?api-version=2017-03-01-preview&%24filter=eventTimestamp%20ge%20'@{subtractFromTime(utcNow(), 30, 'Day', 'yyy-MM-dd')}T16%3A55%3A35Z'%20and%20eventTimestamp%20le%20'@{formatDateTime(utcNow(), 'yyyy-MM-dd')}T22%3A55%3A35Z'%20and%20resourceId%20eq%20'@{items('For_each_resource')?['id']}'"
+                                                    }
+                                                }
+                                            },
+                                            "runAfter": {},
+                                            "type": "Scope"
+                                        }
+                                    },
+                                    "runAfter": {
+                                        "Get_Resources": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Foreach"
+                                },
+                                "Get_Resources": {
+                                    "runAfter": {},
+                                    "type": "Http",
+                                    "inputs": {
+                                        "authentication": {
+                                            "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('UserManagedIdentity'))]",
+                                            "type": "ManagedServiceIdentity"
+                                        },
+                                        "method": "GET",
+                                        "uri": "https://management.azure.com/subscriptions/@{items('For_each_subscription')?['subscriptionId']}/resources?api-version=2019-05-10"
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "List_Subscriptions": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        },
+                        "Initialize_ResourcesNotRecentlyUpdated": {
+                            "runAfter": {},
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "ResourcesNotRecentlyUpdated",
+                                        "type": "array"
+                                    }
+                                ]
+                            }
+                        },
+                        "List_Subscriptions": {
+                            "runAfter": {
+                                "Initialize_ResourcesNotRecentlyUpdated": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http",
+                            "inputs": {
+                                "authentication": {
+                                    "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('UserManagedIdentity'))]",
+                                    "type": "ManagedServiceIdentity"
+                                },
+                                "method": "GET",
+                                "uri": "https://management.azure.com/subscriptions?api-version=2019-06-01"
+                            }
+                        },
+                        "ResourceGroupOwnerLogicApp": {
+                            "runAfter": {
+                                "Compose": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Workflow",
+                            "inputs": {
+                                "body": {
+                                    "ToBeAlertedInsights": "@body('Select_resource_IDs_to_be_alerted')"
+                                },
+                                "host": {
+                                    "triggerName": "manual",
+                                    "workflow": {
+                                        "id": "[resourceId('Microsoft.Logic/workflows', variables('workflows_ResourceGroupOwnerApp_name'))]"
+                                    }
+                                }
+                            }
+                        },
+                        "Select_resource_IDs_to_be_alerted": {
+                            "runAfter": {
+                                "For_each_subscription": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Select",
+                            "inputs": {
+                                "from": "@variables('ResourcesNotRecentlyUpdated')",
+                                "select": {
+                                    "ResourceId": "@item()"
+                                }
+                            }
+                        },
+                        "insightsTeamsBot": {
+                            "runAfter": {
+                                "ResourceGroupOwnerLogicApp": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Workflow",
+                            "inputs": {
+                                "body": {
+                                    "Owners": [
+                                        "@body('ResourceGroupOwnerLogicApp')['ToBeAlertedInsights']"
+                                    ]
+                                },
+                                "host": {
+                                    "triggerName": "manual",
+                                    "workflow": {
+                                        "id": "[resourceId('Microsoft.Logic/workflows', variables('workflows_InsightsTeamsBotApp_name'))]"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {}
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[variables('workflows_CoreApp_name')]",
+            "location": "[parameters('Location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Logic/workflows', variables('workflows_EmailAlertingApp_name'))]",
+                "[resourceId('Microsoft.Logic/workflows', variables('workflows_TeamsBotApp_name'))]",
+                "[resourceId('Microsoft.Logic/workflows', variables('workflows_DeleteResourceGroupApp_name'))]",
+                "[resourceId('Microsoft.Logic/workflows', variables('workflows_CheckResourceGroupsApp_name'))]",
+                "[resourceId('Microsoft.Logic/workflows', variables('workflows_ResourceGroupOwnerApp_name'))]"
+            ],
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {},
+                    "triggers": {
+                        "Recurrence": {
+                            "recurrence": {
+                                "frequency": "Day",
+                                "interval": 3
+                            },
+                            "type": "Recurrence"
+                        }
+                    },
+                    "actions": {
+                        "Alert_Via_Email_and_TeamsBot": {
+                            "actions": {
+                                "For_each_resource_group_to_be_alerted": {
+                                    "foreach": "@body('ResourceGroupOwnerLogicApp')['ToBeAlerted']",
+                                    "actions": {
+                                        "emailAlerting": {
+                                            "runAfter": {
+                                                "teamsBot_2": [
+                                                    "Succeeded",
+                                                    "Failed",
+                                                    "Skipped",
+                                                    "TimedOut"
+                                                ]
+                                            },
+                                            "type": "Workflow",
+                                            "inputs": {
+                                                "body": "@{items('For_each_resource_group_to_be_alerted')}",
+                                                "headers": {
+                                                    "Content-Type": "application/json"
+                                                },
+                                                "host": {
+                                                    "triggerName": "manual",
+                                                    "workflow": {
+                                                        "id": "[resourceId('Microsoft.Logic/workflows', variables('workflows_EmailAlertingApp_name'))]"
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        "teamsBot_2": {
+                                            "runAfter": {},
+                                            "type": "Workflow",
+                                            "inputs": {
+                                                "body": "@{items('For_each_resource_group_to_be_alerted')}",
+                                                "headers": {
+                                                    "Content-Type": "application/json"
+                                                },
+                                                "host": {
+                                                    "triggerName": "manual",
+                                                    "workflow": {
+                                                        "id": "[resourceId('Microsoft.Logic/workflows', variables('workflows_TeamsBotApp_name'))]"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {},
+                                    "type": "Foreach"
+                                }
+                            },
+                            "runAfter": {
+                                "Owner_Information": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Scope"
+                        },
+                        "Delete_Resource_groups_with_email_notification": {
+                            "actions": {
+                                "For_each_resource_group_to_be_deleted": {
+                                    "foreach": "@body('ResourceGroupOwnerLogicApp')['ToBeDeleted']",
+                                    "actions": {
+                                        "logicApp-deleteResourceGroup": {
+                                            "runAfter": {},
+                                            "type": "Workflow",
+                                            "inputs": {
+                                                "body": "@{items('For_each_resource_group_to_be_deleted')}",
+                                                "headers": {
+                                                    "Content-Type": "application/json"
+                                                },
+                                                "host": {
+                                                    "triggerName": "manual",
+                                                    "workflow": {
+                                                        "id": "[resourceId('Microsoft.Logic/workflows', variables('workflows_DeleteResourceGroupApp_name'))]"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {},
+                                    "type": "Foreach",
+                                    "runtimeConfiguration": {
+                                        "concurrency": {
+                                            "repetitions": 1
+                                        }
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "Owner_Information": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Scope"
+                        },
+                        "Fetch_All_Resources_to_be_Deleted_and_Alerted_On": {
+                            "actions": {
+                                "checkResourceGroups": {
+                                    "runAfter": {},
+                                    "type": "Workflow",
+                                    "inputs": {
+                                        "host": {
+                                            "triggerName": "manual",
+                                            "workflow": {
+                                                "id": "[resourceId('Microsoft.Logic/workflows', variables('workflows_CheckResourceGroupsApp_name'))]"
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "runAfter": {},
+                            "type": "Scope"
+                        },
+                        "Owner_Information": {
+                            "actions": {
+                                "ResourceGroupOwnerLogicApp": {
+                                    "runAfter": {},
+                                    "type": "Workflow",
+                                    "inputs": {
+                                        "body": {
+                                            "ToBeAlerted": "@body('checkResourceGroups')['ToBeAlerted']",
+                                            "ToBeDeleted": "@body('checkResourceGroups')['ToBeDeleted']"
+                                        },
+                                        "host": {
+                                            "triggerName": "manual",
+                                            "workflow": {
+                                                "id": "[resourceId('Microsoft.Logic/workflows', variables('workflows_ResourceGroupOwnerApp_name'))]"
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "Fetch_All_Resources_to_be_Deleted_and_Alerted_On": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Scope"
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {}
+            }
+        }
+    ]
+}
