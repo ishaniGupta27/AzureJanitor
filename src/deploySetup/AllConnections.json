@@ -1,0 +1,111 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "variables": {
+        "connections_arm_name": "arm",
+        "connections_teams_name": "teams",
+        "connections_office365_name": "office365",
+        "connections_sharepointonline_name": "sharepointonline",
+        "workflows_CoreApp_name": "CoreApp",
+        "workflows_TeamsBotApp_name": "TeamsBotApp",
+        "workflows_EmailAlertingApp_name": "EmailAlertingApp",
+        "workflows_InsightsTeamsBotApp_name": "InsightsTeamsBotApp",
+        "workflows_InsightsApp_name": "InsightsApp",
+        "workflows_CheckResourceGroupsApp_name": "CheckResourceGroupsApp",
+        "workflows_ResourceGroupOwnerApp_name": "ResourceGroupOwnerApp",
+        "workflows_DeleteResourceGroupApp_name": "DeleteResourceGroupApp"
+    },
+    "parameters": {
+        "TeamName": {
+          "type": "string"
+        },
+        "Subscription": {
+          "type": "string"
+        },
+        "Location": {
+          "type": "string"
+        },
+        "DaysUntilDeletion": {
+          "type": "string"
+        },
+        "AlertDaysBeforeDeletion": {
+          "type": "string"
+        },
+        "AdminEmail": {
+          "type": "string"
+        },
+        "ResourceGroupName": {
+          "type": "string"
+        },
+        "PolicyName": {
+          "type": "string"
+        },
+        "PolicyDisplayName": {
+          "type": "string"
+        },
+        "UserManagedIdentity": {
+          "type": "string"
+        },
+        "PrincipalId": {
+            "type": "string"
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('connections_arm_name')]",
+            "location": "[parameters('Location')]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[parameters('AdminEmail')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_arm_name'))]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('connections_office365_name')]",
+            "location": "[parameters('Location')]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[parameters('AdminEmail')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_office365_name'))]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('connections_sharepointonline_name')]",
+            "location": "[parameters('Location')]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[parameters('AdminEmail')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_sharepointonline_name'))]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('connections_teams_name')]",
+            "location": "[parameters('Location')]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[parameters('AdminEmail')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('Location'), '/managedApis/', variables('connections_teams_name'))]"
+                }
+            }
+        }
+    ]
+}

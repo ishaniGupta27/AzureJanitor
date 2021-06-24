@@ -1,0 +1,161 @@
+{
+	"$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"variables": {
+		"policyDescription": "This policy auto-tags resource groups with createdDate, daysUntilDeletion, & alertDaysBeforeDeletion.",
+		"timeNow": "utcNow()",
+		"userAssignedIdentitiesTemplate": "userAssignedIdentitiesTemplate"
+	},
+	"parameters": {
+		"TeamName": {
+	      "type": "string"
+	    },
+	    "Subscription": {
+	      "type": "string"
+	    },
+	    "Location": {
+	      "type": "string"
+	    },
+	    "DaysUntilDeletion": {
+	      "type": "string"
+	    },
+	    "AlertDaysBeforeDeletion": {
+	      "type": "string"
+	    },
+	    "AdminEmail": {
+	      "type": "string"
+	    },
+	    "ResourceGroupName": {
+	      "type": "string"
+	    },
+	    "PolicyName": {
+	      "type": "string"
+	    },
+	    "PolicyDisplayName": {
+	      "type": "string"
+	    },
+	    "UserManagedIdentity": {
+	      "type": "string"
+	    },
+     	"PrincipalId": {
+	        "type": "string"
+	    },
+        "ResourceTags": {
+        "type": "object",
+        "defaultValue": {
+            "DoNotRunAzureJanitor": "true"
+            }
+        }
+	},
+	"resources": [
+		{
+			"type": "Microsoft.Authorization/policyDefinitions",
+			"name": "[parameters('PolicyName')]",
+			"apiVersion": "2019-09-01",
+			"properties": {
+				"displayName": "[parameters('PolicyDisplayName')]",
+				"policyType": "Custom",
+				"description": "[variables('policyDescription')]",
+				"metadata": {
+					"category": "General"
+				},
+				"mode": "All",
+				"parameters": {},
+				"policyRule": {
+					"if": {
+						"allOf": [
+							{
+								"field": "type",
+								"equals": "Microsoft.Resources/subscriptions/resourceGroups"
+							},
+							{
+								"field": "[concat('tags[', 'CreationDate', ']')]",
+								"exists": "false"
+							},
+							{
+								"field": "[concat('tags[', 'DaysUntilDeletion', ']')]",
+								"exists": "false"
+							},
+							{
+								"field": "[concat('tags[', 'AlertDaysBeforeDeletion', ']')]",
+								"exists": "false"
+							},
+							{
+								"field": "[concat('tags[', 'AdminEmail', ']')]",
+								"exists": "false"
+							},
+							{
+								"field": "[concat('tags[', 'DoNotRunAzureJanitor', ']')]",
+								"exists": "false"
+							}
+						]
+					},
+					"then": {
+						"effect": "append",
+						"details": [
+							{
+								"field": "[concat('tags[', 'CreationDate', ']')]",
+								"value": "[concat('[',variables('timeNow'),']')]"
+							},
+							{
+								"field": "[concat('tags[', 'DaysUntilDeletion', ']')]",
+								"value": "[parameters('DaysUntilDeletion')]"
+							},
+							{
+								"field": "[concat('tags[', 'AlertDaysBeforeDeletion', ']')]",
+								"value": "[parameters('AlertDaysBeforeDeletion')]"
+							},
+							{
+								"field": "[concat('tags[', 'AdminEmail', ']')]",
+								"value": "[parameters('AdminEmail')]"
+							}
+						]
+					}
+				}
+			}
+		},
+		{
+			"name": "[parameters('ResourceGroupName')]",
+			"type": "Microsoft.Resources/resourceGroups",
+			"apiVersion": "2020-06-01",
+			"location": "[parameters('Location')]",
+			"tags": "[parameters('resourceTags')]",
+			"properties": {}
+		},
+		{
+			"type": "Microsoft.Resources/deployments",
+			"name": "[variables('userAssignedIdentitiesTemplate')]",
+			"apiVersion": "2017-05-10",
+			"resourceGroup": "[parameters('ResourceGroupName')]",
+			"dependsOn": [
+				"[resourceId('Microsoft.Resources/resourceGroups', parameters('ResourceGroupName'))]"
+			],
+			"properties": {
+				"expressionEvaluationOptions": {
+					"scope": "outer"
+				},
+				"mode": "Incremental",
+				"template": {
+					"$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+					"contentVersion": "1.0.0.0",
+					"parameters": {},
+					"variables": {},
+					"resources": [
+						{
+							"type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+							"name": "[parameters('UserManagedIdentity')]",
+							"apiVersion": "2018-11-30",
+							"location": "[parameters('Location')]"
+						}
+					],
+						"outputs": {
+						"userAssignedIdentitiesOutput": {
+							"type": "string",
+							"value": "[reference(concat('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userManagedIdentity')), '2018-06-01', 'Full')"
+						}
+						}
+				}
+			}
+		}
+	]
+}
